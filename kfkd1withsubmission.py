@@ -1,4 +1,4 @@
-
+from lasagne.updates import nesterov_momentum
 import cPickle as pickle
 from datetime import datetime
 import os
@@ -25,9 +25,10 @@ except ImportError:
 sys.setrecursionlimit(10000)  # for pickle...
 np.random.seed(42)
 
-FTRAIN = 'data/training.csv'
+FTRAIN = 'data/transtraining1.csv'
 FTEST = 'data/test.csv'
 FLOOKUP = 'data/IdLookupTable.csv'
+
 
 
 def float32(k):
@@ -87,64 +88,64 @@ def plot_weights(weights):
     for i in range(16):
         ax = fig.add_subplot(4, 4, i + 1, xticks=[], yticks=[])
         ax.imshow(weights[:, i].reshape(96, 96), cmap='gray')
+    pyplot.show()
 
-net = NeuralNet(
-    layers=[
+
+net1 = NeuralNet(
+    layers=[  # three layers: one hidden layer
         ('input', layers.InputLayer),
-        ('conv1', Conv2DLayer),
-        ('pool1', MaxPool2DLayer),
-        ('conv2', Conv2DLayer),
-        ('pool2', MaxPool2DLayer),
-        ('conv3', Conv2DLayer),
-        ('pool3', MaxPool2DLayer),
-        ('hidden4', layers.DenseLayer),
-        ('hidden5', layers.DenseLayer),
+        ('hidden', layers.DenseLayer),
         ('output', layers.DenseLayer),
         ],
-    input_shape=(None, 1, 96, 96),
-    conv1_num_filters=32, conv1_filter_size=(3, 3), pool1_pool_size=(2, 2),
-    conv2_num_filters=64, conv2_filter_size=(2, 2), pool2_pool_size=(2, 2),
-    conv3_num_filters=128, conv3_filter_size=(2, 2), pool3_pool_size=(2, 2),
-    hidden4_num_units=500, hidden5_num_units=500,
-    output_num_units=30, output_nonlinearity=None,
+    # layer parameters:
+    input_shape=(None, 9216),  # 96x96 input pixels per batch
+    hidden_num_units=100,  # number of units in hidden layer
+    output_nonlinearity=None,  # output layer uses identity function
+    output_num_units=30,  # 30 target values
 
+    # optimization method:
+    update=nesterov_momentum,
     update_learning_rate=0.01,
     update_momentum=0.9,
 
-    regression=True,
-    max_epochs=1000,
+    regression=True,  # flag to indicate we're dealing with regression problem
+    max_epochs=4,  # we want to train this many epochs
     verbose=1,
     )
 
-X, y = load2d()
-net.fit(X, y)
-with open('netvol.pickle', 'wb') as f:
-    pickle.dump(net, f, -1)
 
 
-X,_ = load2d(test=True)
-y_pred2 = net.predict(X)
+X, y = load()
+net1.fit(X, y)
+
+with open('netsinglehid.pickle', 'wb') as f:
+    pickle.dump(net1, f, -1)
+
+def plot_sample(x, y, axis):
+    img = x.reshape(96, 96)
+    axis.imshow(img, cmap='gray')
+    axis.scatter(y[0::2] * 48 + 48, y[1::2] * 48 + 48, marker='x', s=10)
+
+X, _ = load(test=True)
+y_pred = net1.predict(X)
 
 
-fig = pyplot.figure(figsize=(6, 6))
-fig.subplots_adjust(
-    left=0, right=1, bottom=0, top=1, hspace=0.05, wspace=0.05)
-'''
-for i in range(16):
-    ax = fig.add_subplot(4, 4, i + 1, xticks=[], yticks=[])
-    plot_sample(X[i], y_pred2[i], ax)
-    fig.savefig(str(i + 2000) + '.jpg')
-'''
 
+y_pred2 = y_pred * 48 + 48
+y_pred2 = y_pred2.clip(0, 96)
+df = DataFrame(y_pred2, columns=columns)
 
-train_loss = np.array([i["train_loss"] for i in net.train_history_])
-valid_loss = np.array([i["valid_loss"] for i in net.train_history_])
-pyplot.plot(train_loss, linewidth=3, label="train")
-pyplot.plot(valid_loss, linewidth=3, label="valid")
-pyplot.grid()
-pyplot.legend()
-pyplot.xlabel("epoch")
-pyplot.ylabel("loss")
-pyplot.ylim(1e-3, 1e-2)
-pyplot.yscale("log")
-fig.savefig("finalerror.jpg")
+lookup_table = read_csv(os.path.expanduser(FLOOKUP))
+values = []
+
+for index, row in lookup_table.iterrows():
+    values.append((
+        row['RowId'],
+        df.ix[row.ImageId - 1][row.FeatureName],
+        ))
+
+now_str = datetime.now().isoformat().replace(':', '-')
+submission = DataFrame(values, columns=('RowId', 'Location'))
+filename = 'submission-{}.csv'.format(now_str)
+submission.to_csv(filename, index=False)
+print("Wrote {}".format(filename))
